@@ -1,0 +1,214 @@
+let CONFIG = {
+  openTime : 25000 , // Time to open the door in Milieconds
+  closeTime : 200000 ,   // Time to open the door in Milieconds
+  relaisHoldTime: 700, // Time to push the door opener button in ms
+  mqttCommand : "home-assistant/garage/set",  // Command Topic
+  mqttState   : "home-assistant/garage/state",  // state Topic
+  mqttAvailability : "home-assistant/garage/availability", // Availability Topic
+  debug : true
+};
+/*
+Add in Homeasistant Config.yaml
+mqtt:
+  cover:
+    - name: "Garagentor"
+      device_class: "garage"
+      unique_id: "MQTTGARAGE"
+#      availability:
+#        - topic: "home-assistant/garage/availability"
+#      payload_available: "online"
+#      payload_not_available: "offline"
+      qos: 0
+      retain: true
+      optimistic: false
+      command_topic: "home-assistant/garage/set"
+      payload_open: "OPEN"
+      payload_close: "CLOSE"
+      payload_stop: "STOP"
+      state_topic: "home-assistant/garage/state"
+      state_open: "open"
+      state_opening: "opening"
+      state_closed: "closed"
+      state_closing: "closing"
+      icon: >-
+        {% if states["cover.garagentor"].state == 'open'%}
+        'mdi:garage-open'
+        {% elif states["cover.garagentor"].state == 'closed' %}
+        'mdi:garage'
+        {% elif states["cover.garagentor"].state == 'opening' %}
+        'mdi:arrow-up-bold'
+        {% elif states["cover.garagentor"].state == 'closing' %}
+        'mdi:arrow-down-bold'
+        {%else%}
+        'mdi:alert'
+        {%endif%}
+*/
+
+let STATES = {
+      open: "open",
+      opening: "opening",
+      closed: "closed",
+      closing: "closing",
+      stopped: "stopped",
+      available: "online",
+      not_available: "offline"
+   };
+let COMMANDS = {
+    open: "OPEN",
+    close: "CLOSE",
+    stop: "STOP"
+   };
+
+// Clobal Variable to keep trac of current state
+let currentState = "";
+
+let timerOpening = null;
+
+let timerClosing = null;
+
+// In case you would disregard the results of the call such an empty callback
+// can be used
+function stubCB(res, error_code, error_msg, ud) { };
+
+
+// switche relais on
+function triggerRelais() {
+  if(CONFIG.debug) print("Triggering Relais");
+  Shelly.call("switch.set",
+      { id: 0, on: true },
+      stubCB,
+      null);
+  // release after xxx milisec
+  Timer.set(CONFIG.relaisHoldTime,false,function(){
+  
+        Shelly.call("switch.set",
+           { id: 0, on: false },
+           stubCB,
+           null);
+  
+  },null)
+  
+}
+  
+  
+  
+  // so, door just closed up
+  function handleInputOn(){
+  if(CONFIG.debug) print("Contact ON - Door is closed ");
+  Timer.clear(timerOpening)
+  Timer.clear(timerClosing)
+  setCoverState(STATES.closed); // this is unconditional: If the contact says closed, it is closed.
+}
+
+// so, door just startet opening
+function handleInputOff(){
+  if(CONFIG.debug) print("Contact OFF - Door is opening ");
+  currentState = STATES.opening;  // this is gueswork. it was closed before, so we assume it is opening.
+
+  setCoverState(STATES.opening);  // set MQTT to opening
+
+  Timer.clear(timerOpening)
+  // assume after a while it is open
+  timerOpening = Timer.set(CONFIG.openTime,false,function(){
+      setCoverState(STATES.open);
+      },null);
+}
+
+// Event handler to react on changes of the input sensor
+Shelly.addEventHandler(
+    function (event, ud) {
+      print("Event: " + JSON.stringify(event));
+      if(event.name === "input"){
+        if(event.info.state === true) handleInputOn(); //closed
+        if(event.info.state === false) handleInputOff(); //opening
+      }
+    },
+    null
+);
+
+// helper to send the new states
+function setCoverState(newstate){
+   if(CONFIG.debug) print("MQTT setting state: " +   newstate );
+   MQTT.publish(CONFIG.mqttState, newstate, 0, false);
+   currentState = newstate;  // remember it for later consistency checks
+}
+// helper to send the new states
+function resetCommandTopic(){
+   if(CONFIG.debug) print("MQTT Reset Command State" );
+   MQTT.publish(CONFIG.mqttCommand , "", 0, false);
+}
+
+// so, lets subscribe to the MQTT command
+MQTT.subscribe(
+  CONFIG.mqttCommand,
+  function (topic, message, ud) {
+     // add debug text
+     if(CONFIG.debug) print("MQTT Command Topic" +   JSON.stringify(topic) + " Message: "+   JSON.stringify(message));
+
+     if(message===COMMANDS.open){                   // open command via MQTT recieved
+        if(CONFIG.debug) print("MQTT Open recieved on state  " + currentState );
+        if(currentState === STATES.closed) {       // we are closed right now
+          triggerRelais();                          // so, push the button. Within seconds the contact will open
+                                                    // and set the opening state + timer based open
+        }
+
+     } else if(message===COMMANDS.close){           // close command via MQTT
+         if(CONFIG.debug) print("MQTT Close recieved on state  " + currentState );
+         if(currentState === STATES.open) {
+            setCoverState(STATES.closing);          // puh the button
+            triggerRelais();                        // now the door should close
+
+            // Set a timer, to check if the door indeed closed
+            openTimer = Timer.set(CONFIG.closeTime ,false,function(){
+               if(currentState !== STATES.closed){
+                  // ok. The dour should be closed, but it is not.
+                  // now we could push and wait for 3 times to see if we can force it.
+                  // or we just put the status to stopped.
+                  setCoverState(STATES.stopped);
+               }
+            },null);
+         }
+
+     }
+     else if(message===COMMANDS.stop){
+       triggerRelais();
+       setCoverState(STATES.stopped);
+
+     }
+     if(message!=="")
+     {
+       resetCommandTopic();
+     }
+  }, //EndOfEventhandler
+  null
+);
+
+
+// Anounce the devilce to be available now & every 10 minutes
+/*
+MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
+Timer.set(10000,true,function(){
+         MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
+         },null);
+*/
+
+// we are here in the startup run; so determin the current status and set the MQTT Accordingly
+Shelly.call(
+    "input.getstatus",
+    {id:0},
+    function (result, error_code, error_message, user_data) {
+        print("got input status \"" + JSON.stringify(result.state) + "\" err " + JSON.stringify(error_code));
+        if (error_code === 0) {
+        print("no error");
+            //{"state":true,"id":0}
+           if(result.state === true){  // if it is
+             print(" true");
+             setCoverState(STATES.closed);
+           } else {
+             print("false");
+             setCoverState(STATES.open);
+           }
+        }
+    },
+    null
+);
