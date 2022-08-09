@@ -1,26 +1,19 @@
 let CONFIG = {
   openTime : 25000 , // Time to open the door in Milieconds
-  closeTime : 200000 ,   // Time to open the door in Milieconds
+  closeTime : 30000 ,   // Time to open the door in Milieconds
   relaisHoldTime: 700, // Time to push the door opener button in ms
   mqttCommand : "home-assistant/garage/set",  // Command Topic
   mqttState   : "home-assistant/garage/state",  // state Topic
+//  mqttPoition : "home-assistant/garage/position", //poition topic
   mqttAvailability : "home-assistant/garage/availability", // Availability Topic
   debug : true
 };
 /*
 Add in Homeasistant Config.yaml
-mqtt:
   cover:
     - name: "Garagentor"
       device_class: "garage"
       unique_id: "MQTTGARAGE"
-#      availability:
-#        - topic: "home-assistant/garage/availability"
-#      payload_available: "online"
-#      payload_not_available: "offline"
-      qos: 0
-      retain: true
-      optimistic: false
       command_topic: "home-assistant/garage/set"
       payload_open: "OPEN"
       payload_close: "CLOSE"
@@ -30,18 +23,6 @@ mqtt:
       state_opening: "opening"
       state_closed: "closed"
       state_closing: "closing"
-      icon: >-
-        {% if states["cover.garagentor"].state == 'open'%}
-        'mdi:garage-open'
-        {% elif states["cover.garagentor"].state == 'closed' %}
-        'mdi:garage'
-        {% elif states["cover.garagentor"].state == 'opening' %}
-        'mdi:arrow-up-bold'
-        {% elif states["cover.garagentor"].state == 'closing' %}
-        'mdi:arrow-down-bold'
-        {%else%}
-        'mdi:alert'
-        {%endif%}
 */
 
 let STATES = {
@@ -49,7 +30,50 @@ let STATES = {
       opening: "opening",
       closed: "closed",
       closing: "closing",
-      stopped: "stopped",
+      available: "online",
+      not_available: "offline"
+   };
+let COMMANDS = {
+    open: "OPEN",
+    close: "CLOSE",
+    stop: "STOP"
+   };
+
+// Clobal Variable to keep trac of current state
+let currentState = "";
+
+let timerOpening = null;let CONFIG = {
+  openTime : 25000 , // Time to open the door in Milieconds
+  closeTime : 200000 ,   // Time to open the door in Milieconds
+  relaisHoldTime: 700, // Time to push the door opener button in ms
+  mqttCommand : "home-assistant/garage/set",  // Command Topic
+  mqttState   : "home-assistant/garage/state",  // state Topic
+//  mqttPoition : "home-assistant/garage/position", //poition topic
+  mqttAvailability : "home-assistant/garage/availability", // Availability Topic
+  debug : true
+};
+/*
+Add in Homeasistant Config.yaml
+  cover:
+    - name: "Garagentor"
+      device_class: "garage"
+      unique_id: "MQTTGARAGE"
+      command_topic: "home-assistant/garage/set"
+      payload_open: "OPEN"
+      payload_close: "CLOSE"
+      payload_stop: "STOP"
+      state_topic: "home-assistant/garage/state"
+      state_open: "open"
+      state_opening: "opening"
+      state_closed: "closed"
+      state_closing: "closing"
+*/
+
+let STATES = {
+      open: "open",
+      opening: "opening",
+      closed: "closed",
+      closing: "closing",
       available: "online",
       not_available: "offline"
    };
@@ -90,8 +114,6 @@ function triggerRelais() {
   
 }
   
-  
-  
   // so, door just closed up
   function handleInputOn(){
   if(CONFIG.debug) print("Contact ON - Door is closed ");
@@ -106,7 +128,7 @@ function handleInputOff(){
   currentState = STATES.opening;  // this is gueswork. it was closed before, so we assume it is opening.
 
   setCoverState(STATES.opening);  // set MQTT to opening
-
+  Timer.clear(timerClosing)
   Timer.clear(timerOpening)
   // assume after a while it is open
   timerOpening = Timer.set(CONFIG.openTime,false,function(){
@@ -159,12 +181,14 @@ MQTT.subscribe(
             triggerRelais();                        // now the door should close
 
             // Set a timer, to check if the door indeed closed
-            openTimer = Timer.set(CONFIG.closeTime ,false,function(){
+            if(CONFIG.debug) print("Settig up Closing Timer... ");
+            timerClosing = Timer.set(CONFIG.closeTime ,false,function(){
+               if(CONFIG.debug) print("Closing timer triggered on status " + currentState );
                if(currentState !== STATES.closed){
                   // ok. The dour should be closed, but it is not.
                   // now we could push and wait for 3 times to see if we can force it.
-                  // or we just put the status to stopped.
-                  setCoverState(STATES.stopped);
+                  // or we just put the status to open.
+                  setCoverState(STATES.open);
                }
             },null);
          }
@@ -172,7 +196,7 @@ MQTT.subscribe(
      }
      else if(message===COMMANDS.stop){
        triggerRelais();
-       setCoverState(STATES.stopped);
+ //      setCoverState(STATES.stopped);
 
      }
      if(message!=="")
@@ -184,13 +208,14 @@ MQTT.subscribe(
 );
 
 
+
+
 // Anounce the devilce to be available now & every 10 minutes
-/*
 MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
 Timer.set(10000,true,function(){
          MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
          },null);
-*/
+
 
 // we are here in the startup run; so determin the current status and set the MQTT Accordingly
 Shelly.call(
@@ -212,3 +237,4 @@ Shelly.call(
     },
     null
 );
+
