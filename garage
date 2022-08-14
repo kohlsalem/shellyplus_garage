@@ -1,4 +1,4 @@
-let CONFIG = {
+let timerOpening = null;let CONFIG = {
   openTime : 25000 , // Time to open the door in Milieconds
   closeTime : 30000 ,   // Time to open the door in Milieconds
   relaisHoldTime: 700, // Time to push the door opener button in ms
@@ -6,51 +6,7 @@ let CONFIG = {
   mqttState   : "home-assistant/garage/state",  // state Topic
 //  mqttPoition : "home-assistant/garage/position", //poition topic
   mqttAvailability : "home-assistant/garage/availability", // Availability Topic
-  debug : true
-};
-/*
-Add in Homeasistant Config.yaml
-  cover:
-    - name: "Garagentor"
-      device_class: "garage"
-      unique_id: "MQTTGARAGE"
-      command_topic: "home-assistant/garage/set"
-      payload_open: "OPEN"
-      payload_close: "CLOSE"
-      payload_stop: "STOP"
-      state_topic: "home-assistant/garage/state"
-      state_open: "open"
-      state_opening: "opening"
-      state_closed: "closed"
-      state_closing: "closing"
-*/
-
-let STATES = {
-      open: "open",
-      opening: "opening",
-      closed: "closed",
-      closing: "closing",
-      available: "online",
-      not_available: "offline"
-   };
-let COMMANDS = {
-    open: "OPEN",
-    close: "CLOSE",
-    stop: "STOP"
-   };
-
-// Clobal Variable to keep trac of current state
-let currentState = "";
-
-let timerOpening = null;let CONFIG = {
-  openTime : 25000 , // Time to open the door in Milieconds
-  closeTime : 200000 ,   // Time to open the door in Milieconds
-  relaisHoldTime: 700, // Time to push the door opener button in ms
-  mqttCommand : "home-assistant/garage/set",  // Command Topic
-  mqttState   : "home-assistant/garage/state",  // state Topic
-//  mqttPoition : "home-assistant/garage/position", //poition topic
-  mqttAvailability : "home-assistant/garage/availability", // Availability Topic
-  debug : true
+  debug : false
 };
 /*
 Add in Homeasistant Config.yaml
@@ -139,7 +95,7 @@ function handleInputOff(){
 // Event handler to react on changes of the input sensor
 Shelly.addEventHandler(
     function (event, ud) {
-      print("Event: " + JSON.stringify(event));
+      if(CONFIG.debug) print("Event: " + JSON.stringify(event));
       if(event.name === "input"){
         if(event.info.state === true) handleInputOn(); //closed
         if(event.info.state === false) handleInputOff(); //opening
@@ -222,15 +178,15 @@ Shelly.call(
     "input.getstatus",
     {id:0},
     function (result, error_code, error_message, user_data) {
-        print("got input status \"" + JSON.stringify(result.state) + "\" err " + JSON.stringify(error_code));
+        if(CONFIG.debug) print("got input status \"" + JSON.stringify(result.state) + "\" err " + JSON.stringify(error_code));
         if (error_code === 0) {
-        print("no error");
+        if(CONFIG.debug) print("no error");
             //{"state":true,"id":0}
            if(result.state === true){  // if it is
-             print(" true");
+             if(CONFIG.debug) print(" true");
              setCoverState(STATES.closed);
            } else {
-             print("false");
+             if(CONFIG.debug) print("false");
              setCoverState(STATES.open);
            }
         }
