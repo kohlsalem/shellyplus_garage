@@ -170,6 +170,7 @@ MQTT.subscribe(
 MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
 Timer.set(10000,true,function(){
          MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
+         MQTT.publish(CONFIG.mqttState, currentState, 0, false);
          },null);
 
 
