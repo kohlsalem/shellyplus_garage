@@ -4,7 +4,6 @@ let timerOpening = null;let CONFIG = {
   relaisHoldTime: 700, // Time to push the door opener button in ms
   mqttCommand : "home-assistant/garage/set",  // Command Topic
   mqttState   : "home-assistant/garage/state",  // state Topic
-//  mqttPoition : "home-assistant/garage/position", //poition topic
   mqttAvailability : "home-assistant/garage/availability", // Availability Topic
   debug : false
 };
@@ -46,6 +45,8 @@ let timerOpening = null;
 
 let timerClosing = null;
 
+let blockCommand = true; // block all command executions for the first seconds
+
 // In case you would disregard the results of the call such an empty callback
 // can be used
 function stubCB(res, error_code, error_msg, ud) { };
@@ -60,18 +61,16 @@ function triggerRelais() {
       null);
   // release after xxx milisec
   Timer.set(CONFIG.relaisHoldTime,false,function(){
-  
-        Shelly.call("switch.set",
-           { id: 0, on: false },
-           stubCB,
-           null);
-  
+      Shelly.call("switch.set",
+         { id: 0, on: false },
+         stubCB,
+         null);
   },null)
   
 }
   
-  // so, door just closed up
-  function handleInputOn(){
+// so, door just closed up
+function handleInputOn(){
   if(CONFIG.debug) print("Contact ON - Door is closed ");
   Timer.clear(timerOpening)
   Timer.clear(timerClosing)
@@ -110,19 +109,22 @@ function setCoverState(newstate){
    MQTT.publish(CONFIG.mqttState, newstate, 0, false);
    currentState = newstate;  // remember it for later consistency checks
 }
-// helper to send the new states
+// helper to clear command state
 function resetCommandTopic(){
    if(CONFIG.debug) print("MQTT Reset Command State" );
    MQTT.publish(CONFIG.mqttCommand , "", 0, false);
 }
 
-// so, lets subscribe to the MQTT command
+// subscribe to the MQTT command
 MQTT.subscribe(
   CONFIG.mqttCommand,
   function (topic, message, ud) {
-     // add debug text
+     
      if(CONFIG.debug) print("MQTT Command Topic" +   JSON.stringify(topic) + " Message: "+   JSON.stringify(message));
-
+     if( blockCommand ){
+        if(CONFIG.debug) print("Command Execution Blocked");
+        return;
+     }
      if(message===COMMANDS.open){                   // open command via MQTT recieved
         if(CONFIG.debug) print("MQTT Open recieved on state  " + currentState );
         if(currentState === STATES.closed) {       // we are closed right now
@@ -152,10 +154,9 @@ MQTT.subscribe(
      }
      else if(message===COMMANDS.stop){
        triggerRelais();
- //      setCoverState(STATES.stopped);
-
      }
-     if(message!=="")
+     // i had issues, that sometimes (idk) an old open was executed again. overnight. thats bad, therfore
+     if(message==="") {} else //!== "" did not work whatever, yes, bugs me a bit
      {
        resetCommandTopic();
      }
@@ -164,13 +165,21 @@ MQTT.subscribe(
 );
 
 
-
+resetCommandTopic();
 
 // Anounce the devilce to be available now & every 10 minutes
 MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
-Timer.set(10000,true,function(){
+Timer.set(600000,true,function(){
          MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
          MQTT.publish(CONFIG.mqttState, currentState, 0, false);
+        // resetCommandTopic();
+         },null);
+
+//Directly on tartup i still get a "ghost" open, even so i set explicitly close. 
+//blocking exec ist not nice, bu---
+Timer.set(5000,false,function(){
+           if(CONFIG.debug) print("Remove command block");
+           blockCommand = false;
          },null);
 
 
