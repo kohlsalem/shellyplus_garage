@@ -1,10 +1,11 @@
-let timerOpening = null;let CONFIG = {
+let CONFIG = {
   openTime : 25000 , // Time to open the door in Milieconds
   closeTime : 30000 ,   // Time to open the door in Milieconds
+  autoCloseTime: 900000 , //Time to autoclose
   relaisHoldTime: 700, // Time to push the door opener button in ms
   mqttCommand : "home-assistant/garage/set",  // Command Topic
   mqttState   : "home-assistant/garage/state",  // state Topic
-  mqttAvailability : "home-assistant/garage/availability", // Availability Topic
+//  mqttAvailability : "home-assistant/garage/availability", // Availability Topic
   debug : false
 };
 /*
@@ -45,6 +46,9 @@ let timerOpening = null;
 
 let timerClosing = null;
 
+let timerAutoclose = null;
+
+
 let blockCommand = true; // block all command executions for the first seconds
 
 // In case you would disregard the results of the call such an empty callback
@@ -74,6 +78,7 @@ function handleInputOn(){
   if(CONFIG.debug) print("Contact ON - Door is closed ");
   Timer.clear(timerOpening)
   Timer.clear(timerClosing)
+  Timer.clear(timerAutoclose)
   setCoverState(STATES.closed); // this is unconditional: If the contact says closed, it is closed.
 }
 
@@ -89,6 +94,10 @@ function handleInputOff(){
   timerOpening = Timer.set(CONFIG.openTime,false,function(){
       setCoverState(STATES.open);
       },null);
+  // try to close, if it     
+  timerAutoclose =  Timer.set(CONFIG.autoCloseTime,false,function(){
+      doClose();
+  },null);
 }
 
 // Event handler to react on changes of the input sensor
@@ -115,65 +124,75 @@ function resetCommandTopic(){
    MQTT.publish(CONFIG.mqttCommand , "", 0, false);
 }
 
+function doClose(){
+  if(currentState === STATES.open) {
+    setCoverState(STATES.closing);          // puh the button
+    triggerRelais();                        // now the door should close
+
+    // Set a timer, to check if the door indeed closed
+    if(CONFIG.debug) print("Settig up Closing Timer... ");
+    timerClosing = Timer.set(CONFIG.closeTime ,false,function(){
+      if(CONFIG.debug) print("Closing timer triggered on status " + currentState );
+      if(currentState !== STATES.closed){
+          // ok. The dour should be closed, but it is not.
+          // now we could push and wait for 3 times to see if we can force it.
+          // or we just put the status to open.
+          setCoverState(STATES.open);
+      }
+    },null);
+  }
+}
+
+function doOpen(){
+  if(currentState === STATES.closed) {  // we are closed right now
+    triggerRelais();                    // so, push the button. Within seconds the contact will open
+                                        // and set the opening state + timer based open
+  }
+}
+
+function doStop(){
+  triggerRelais();
+}
+
+
 // subscribe to the MQTT command
 MQTT.subscribe(
   CONFIG.mqttCommand,
   function (topic, message, ud) {
      
-     if(CONFIG.debug) print("MQTT Command Topic" +   JSON.stringify(topic) + " Message: "+   JSON.stringify(message));
-     if( blockCommand ){
-        if(CONFIG.debug) print("Command Execution Blocked");
-        return;
-     }
-     if(message===COMMANDS.open){                   // open command via MQTT recieved
-        if(CONFIG.debug) print("MQTT Open recieved on state  " + currentState );
-        if(currentState === STATES.closed) {       // we are closed right now
-          triggerRelais();                          // so, push the button. Within seconds the contact will open
-                                                    // and set the opening state + timer based open
-        }
-
-     } else if(message===COMMANDS.close){           // close command via MQTT
-         if(CONFIG.debug) print("MQTT Close recieved on state  " + currentState );
-         if(currentState === STATES.open) {
-            setCoverState(STATES.closing);          // puh the button
-            triggerRelais();                        // now the door should close
-
-            // Set a timer, to check if the door indeed closed
-            if(CONFIG.debug) print("Settig up Closing Timer... ");
-            timerClosing = Timer.set(CONFIG.closeTime ,false,function(){
-               if(CONFIG.debug) print("Closing timer triggered on status " + currentState );
-               if(currentState !== STATES.closed){
-                  // ok. The dour should be closed, but it is not.
-                  // now we could push and wait for 3 times to see if we can force it.
-                  // or we just put the status to open.
-                  setCoverState(STATES.open);
-               }
-            },null);
-         }
-
-     }
-     else if(message===COMMANDS.stop){
-       triggerRelais();
-     }
-     // i had issues, that sometimes (idk) an old open was executed again. overnight. thats bad, therfore
-     if(message==="") {} else //!== "" did not work whatever, yes, bugs me a bit
-     {
-       resetCommandTopic();
-     }
+    if(CONFIG.debug) print("MQTT Command Topic" +   JSON.stringify(topic) + " Message: "+   JSON.stringify(message));
+    if( blockCommand ){
+      if(CONFIG.debug) print("Command Execution Blocked");
+      return;
+    }
+    if(message===COMMANDS.open){                   // open command via MQTT recieved
+      if(CONFIG.debug) print("MQTT Open recieved on state  " + currentState );
+      doOpen();
+    } else if(message===COMMANDS.close){           // close command via MQTT
+      if(CONFIG.debug) print("MQTT Close recieved on state  " + currentState );
+        doClose();
+    }
+    else if(message===COMMANDS.stop){
+      dotop();
+    }
+    // i had issues, that sometimes (idk) an old open was executed again. overnight. thats bad, therfore
+    if(message==="") {} else //!== "" did not work whatever, yes, bugs me a bit
+    {
+      resetCommandTopic();
+    }
   }, //EndOfEventhandler
   null
 );
 
-
 resetCommandTopic();
 
 // Anounce the devilce to be available now & every 10 minutes
-MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
-Timer.set(600000,true,function(){
-         MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
-         MQTT.publish(CONFIG.mqttState, currentState, 0, false);
+//MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
+//Timer.set(600000,true,function(){
+//         MQTT.publish(CONFIG.mqttAvailability, STATES.available, 0, false);
+//         MQTT.publish(CONFIG.mqttState, currentState, 0, false);
         // resetCommandTopic();
-         },null);
+//         },null);
 
 //Directly on tartup i still get a "ghost" open, even so i set explicitly close. 
 //blocking exec ist not nice, bu---
